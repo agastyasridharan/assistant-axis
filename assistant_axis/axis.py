@@ -220,3 +220,75 @@ def aggregate_role_vectors(
 
     stacked = torch.stack(filtered)  # (n_roles, n_layers, hidden_dim)
     return stacked.mean(dim=0)  # (n_layers, hidden_dim)
+
+
+def compute_residual_vector(
+    role_vector: torch.Tensor,
+    axis: torch.Tensor,
+    layer: int,
+) -> tuple:
+    """
+    Decompose a role vector into its projection onto the axis and the orthogonal residual.
+
+    The projection captures the "generic not-Assistant" component (shared across roles),
+    while the residual captures persona-specific information orthogonal to the axis.
+
+    Args:
+        role_vector: Tensor of shape (n_layers, hidden_dim)
+        axis: Tensor of shape (n_layers, hidden_dim)
+        layer: Layer index to decompose at
+
+    Returns:
+        Tuple of (proj_vec, residual, proj_scalar) where:
+        - proj_vec: Projection onto axis, shape (hidden_dim,)
+        - residual: Orthogonal component, shape (hidden_dim,)
+        - proj_scalar: Scalar projection value
+    """
+    ax = axis[layer].float()
+    ax_hat = ax / (ax.norm() + 1e-8)
+    v = role_vector[layer].float()
+
+    proj_scalar = float(v @ ax_hat)
+    proj_vec = proj_scalar * ax_hat
+    residual = v - proj_vec
+
+    return proj_vec, residual, proj_scalar
+
+
+def compute_residual_vectors_batch(
+    role_vectors: dict,
+    axis: torch.Tensor,
+    layer: int,
+    exclude_roles: Optional[list] = None,
+) -> dict:
+    """
+    Compute residual vectors for all roles at a given layer.
+
+    Args:
+        role_vectors: Dict mapping role names to vectors (n_layers, hidden_dim)
+        axis: Tensor of shape (n_layers, hidden_dim)
+        layer: Layer index to decompose at
+        exclude_roles: Roles to skip
+
+    Returns:
+        Dict mapping role names to dicts with keys:
+        'proj_vec', 'residual', 'proj_scalar', 'residual_norm', 'proj_norm', 'full_norm'
+    """
+    exclude_roles = exclude_roles or []
+    results = {}
+
+    for name, vec in role_vectors.items():
+        if name in exclude_roles:
+            continue
+
+        proj_vec, residual, proj_scalar = compute_residual_vector(vec, axis, layer)
+        results[name] = {
+            "proj_vec": proj_vec,
+            "residual": residual,
+            "proj_scalar": proj_scalar,
+            "residual_norm": float(residual.norm()),
+            "proj_norm": float(proj_vec.norm()),
+            "full_norm": float(vec[layer].float().norm()),
+        }
+
+    return results

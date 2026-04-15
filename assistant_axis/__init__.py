@@ -29,6 +29,8 @@ from .axis import (
     cosine_similarity_per_layer,
     axis_norm_per_layer,
     aggregate_role_vectors,
+    compute_residual_vector,
+    compute_residual_vectors_batch,
 )
 from .generation import (
     generate_response,
@@ -64,6 +66,8 @@ __all__ = [
     "cosine_similarity_per_layer",
     "axis_norm_per_layer",
     "aggregate_role_vectors",
+    "compute_residual_vector",
+    "compute_residual_vectors_batch",
     # Generation
     "generate_response",
     "format_conversation",
