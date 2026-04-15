@@ -64,6 +64,40 @@ logger = logging.getLogger(__name__)
 
 
 TARGET_PERSONAS = ["ghost", "librarian", "demon"]
+
+
+def build_conversation(
+    question: str,
+    system_prompt: str = "",
+    tokenizer=None,
+) -> List[Dict[str, str]]:
+    """Build a conversation, handling models that don't support system prompts."""
+    if not system_prompt:
+        return [{"role": "user", "content": question}]
+
+    # Check if model supports system prompts
+    supports_system = True
+    if tokenizer is not None:
+        try:
+            test_conv = [
+                {"role": "system", "content": "__TEST__"},
+                {"role": "user", "content": "hello"},
+            ]
+            output = tokenizer.apply_chat_template(
+                test_conv, tokenize=False, add_generation_prompt=False,
+            )
+            supports_system = "__TEST__" in output
+        except Exception:
+            supports_system = False
+
+    if supports_system:
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
+        ]
+    else:
+        # Prepend system prompt to user message
+        return [{"role": "user", "content": f"{system_prompt}\n\n{question}"}]
 CONTROL_PERSONAS = ["angel", "criminal"]
 PILOT_COEFFICIENTS = [0.5, 1, 2, 5, 10, 15, 20]
 
@@ -269,10 +303,7 @@ def run_pilot(pm, axis, role_vectors, questions, roles_dir, layer, output_dir):
             for method, coeff, sys_prompt in controls:
                 desc = f"{persona}/control/{method}/prompt={'yes' if sys_prompt else 'no'}"
                 for q_idx, question in enumerate(tqdm(questions, desc=desc, leave=False)):
-                    conversation = []
-                    if sys_prompt:
-                        conversation.append({"role": "system", "content": sys_prompt})
-                    conversation.append({"role": "user", "content": question})
+                    conversation = build_conversation(question, sys_prompt, pm.tokenizer)
 
                     result = generate_steered_response(
                         pm, axis, conversation, None, 0.0, layer, "none"
@@ -422,10 +453,7 @@ def run_main(pm, axis, role_vectors, questions, roles_dir, layer, output_dir, op
 
                 desc = f"{persona}/{cond['name']}"
                 for q_idx, question in enumerate(tqdm(questions, desc=desc, leave=False)):
-                    conversation = []
-                    if cond["prompt"]:
-                        conversation.append({"role": "system", "content": cond["prompt"]})
-                    conversation.append({"role": "user", "content": question})
+                    conversation = build_conversation(question, cond["prompt"], pm.tokenizer)
 
                     result = generate_steered_response(
                         pm, axis, conversation,
@@ -481,15 +509,23 @@ def run_multiturn(pm, axis, role_vectors, questions, roles_dir, layer, output_di
                 desc = f"{persona}/{mode_name}"
 
                 for conv_idx, seed_q in enumerate(tqdm(seed_questions, desc=desc, leave=False)):
+                    # For prompt_only mode, prepend system prompt to first user message
+                    # (handled per-turn below for models without system prompt support)
                     conversation = []
-                    if mode_name == "prompt_only":
-                        conversation.append({"role": "system", "content": system_prompt_1})
+                    multiturn_sys_prompt = system_prompt_1 if mode_name == "prompt_only" else ""
 
                     turn_results = []
 
                     for turn_idx, turn_def in enumerate(MULTITURN_TURNS):
                         user_content = turn_def["content"] or seed_q
-                        conversation.append({"role": "user", "content": user_content})
+
+                        # For the first turn with a system prompt, prepend it to user message
+                        # (handles models like Gemma 2 that don't support system role)
+                        if turn_idx == 0 and multiturn_sys_prompt:
+                            first_turn_conv = build_conversation(user_content, multiturn_sys_prompt, pm.tokenizer)
+                            conversation.extend(first_turn_conv)
+                        else:
+                            conversation.append({"role": "user", "content": user_content})
 
                         # Determine if steering is active for this turn
                         steer_this_turn = (
