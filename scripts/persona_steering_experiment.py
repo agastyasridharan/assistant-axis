@@ -185,8 +185,8 @@ def generate_steered_response(
     if steering_vector is not None and method == "mean_ablation":
         steerer = create_mean_ablation_steerer(
             pm.model,
-            feature_directions=[axis[layer]],
-            mean_activations=[steering_vector],
+            feature_directions=[axis[layer].float()],
+            mean_activations=[steering_vector.float()],
             layer_indices=[layer],
         )
         with steerer:
@@ -324,7 +324,11 @@ def run_pilot(pm, axis, role_vectors, questions, roles_dir, layer, output_dir):
 
             # Run steering methods
             for method, coefficients in methods_and_coeffs:
-                steering_vec = compute_steering_direction(role_vec, axis, layer, method)
+                if method == "mean_ablation":
+                    # mean_ablation uses the role vector directly as the replacement activation
+                    steering_vec = role_vec[layer].float()
+                else:
+                    steering_vec = compute_steering_direction(role_vec, axis, layer, method)
 
                 for coeff in coefficients:
                     desc = f"{persona}/{method}/coeff={coeff}"
@@ -356,7 +360,7 @@ def run_pilot(pm, axis, role_vectors, questions, roles_dir, layer, output_dir):
                 for q_idx, question in enumerate(tqdm(questions, desc=desc, leave=False)):
                     conversation = [{"role": "user", "content": question}]
                     result = generate_steered_response(
-                        pm, axis, conversation, random_vec, coeff, layer, "none"
+                        pm, axis, conversation, random_vec, coeff, layer, "random"
                     )
                     save_result(writer, {
                         "persona": persona,
@@ -378,7 +382,7 @@ def run_pilot(pm, axis, role_vectors, questions, roles_dir, layer, output_dir):
                 for q_idx, question in enumerate(tqdm(questions, desc=desc, leave=False)):
                     conversation = [{"role": "user", "content": question}]
                     result = generate_steered_response(
-                        pm, axis, conversation, norm_matched_vec, coeff, layer, "none"
+                        pm, axis, conversation, norm_matched_vec, coeff, layer, "norm_matched"
                     )
                     save_result(writer, {
                         "persona": persona,
@@ -444,7 +448,9 @@ def run_main(pm, axis, role_vectors, questions, roles_dir, layer, output_dir, op
                 vec_source = cond.get("vector_override", persona)
                 source_vec = role_vectors.get(vec_source, role_vec)
 
-                if cond["method"] != "none":
+                if cond["method"] == "mean_ablation":
+                    steering_vec = source_vec[layer].float()
+                elif cond["method"] != "none":
                     steering_vec = compute_steering_direction(
                         source_vec, axis, layer, cond["method"]
                     )
